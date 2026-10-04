@@ -42,7 +42,7 @@ check 'git --version'
 check 'code-server --version'
 
 case "$runtime" in
-  php) check 'php -v && composer --version && node -v && php -m | grep -q pdo_pgsql' ;;
+  php) check 'php -v && composer --version && node -v && php -m | grep -q pdo_pgsql && php -m | grep -qx gd && php -m | grep -qx exif && php -m | grep -qx mongodb && php -m | grep -qx intl' ;;
   node) check 'node -v && npm -v' ;;
   python) check 'python3 --version && pip --version' ;;
   java) check 'java -version' ;;

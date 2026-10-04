@@ -13,7 +13,7 @@ Published today: `php` and `node`. Python, Java, .NET, Go and Rust are added to 
 Tags: `<version>` always points at the newest build; `<version>-r<YYYYMMDD>` is fixed.
 
 ## What is where
-- `Dockerfile`: the one recipe for every image. Build arguments pick the base image, whether to add Node, and extra PHP extensions. The Server Side Up base already carries `pdo_mysql`, `pdo_pgsql`, `zip`, `pcntl`, `redis` and the usual core ones; `images.json` lists only what is added on top (`intl`, `gd`, `bcmath`).
+- `Dockerfile`: the one recipe for every image. Build arguments pick the base image, whether to add Node, and extra PHP extensions. The Server Side Up base already carries `pdo_mysql`, `pdo_pgsql`, `zip`, `pcntl`, `redis` and the usual core ones; `images.json` lists only what is added on top (`intl`, `gd`, `bcmath`, `exif`, `mongodb`).
 - `images.json`: the images that are published (runtime, version, base image, options) and the pinned code-server version. Add an entry here to publish a new runtime or version; the LaraKube CLI must also offer it.
 - `scripts/smoke.sh`: starts an image and checks the editor and the runtime's tools.
 
@@ -30,7 +30,7 @@ docker build -t workspace-php \
   --build-arg BASE_IMAGE=docker.io/serversideup/php:8.4-cli \
   --build-arg CODE_SERVER_VERSION=4.140.0 \
   --build-arg INSTALL_NODE=1 \
-  --build-arg PHP_EXTENSIONS="intl gd bcmath" .
+  --build-arg PHP_EXTENSIONS="intl gd bcmath exif mongodb" .
 scripts/smoke.sh workspace-php php
 ```
 
