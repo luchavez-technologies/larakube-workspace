@@ -31,7 +31,7 @@ jobs:
       images: ${{ steps.list.outputs.images }}
       code_server: ${{ steps.list.outputs.code_server }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install the LaraKube CLI
         run: curl -fsSL https://cli.larakube.app/install.sh | bash -s -- --canary
@@ -60,7 +60,7 @@ jobs:
         platform: [amd64, arm64]
     runs-on: ${{ matrix.platform == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install the LaraKube CLI
         run: curl -fsSL https://cli.larakube.app/install.sh | bash -s -- --canary
