@@ -6,28 +6,28 @@
       "version": "8.5",
       "base": "docker.io/serversideup/php:8.5-cli",
       "installNode": true,
-      "phpExtensions": "pdo_mysql pdo_pgsql intl zip gd bcmath pcntl redis"
+      "phpExtensions": "intl gd bcmath"
     },
     {
       "runtime": "php",
       "version": "8.4",
       "base": "docker.io/serversideup/php:8.4-cli",
       "installNode": true,
-      "phpExtensions": "pdo_mysql pdo_pgsql intl zip gd bcmath pcntl redis"
+      "phpExtensions": "intl gd bcmath"
     },
     {
       "runtime": "php",
       "version": "8.3",
       "base": "docker.io/serversideup/php:8.3-cli",
       "installNode": true,
-      "phpExtensions": "pdo_mysql pdo_pgsql intl zip gd bcmath pcntl redis"
+      "phpExtensions": "intl gd bcmath"
     },
     {
       "runtime": "php",
       "version": "8.2",
       "base": "docker.io/serversideup/php:8.2-cli",
       "installNode": true,
-      "phpExtensions": "pdo_mysql pdo_pgsql intl zip gd bcmath pcntl redis"
+      "phpExtensions": "intl gd bcmath"
     },
     {
       "runtime": "node",
