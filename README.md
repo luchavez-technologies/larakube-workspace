@@ -12,6 +12,9 @@ Container images for LaraKube CLI workspaces: a language toolchain, git and a br
 
 Tags: `<version>` always points at the newest build; `<version>-r<YYYYMMDD>` is fixed.
 
+## Which runtimes are published
+`runtimes.txt` lists them (today `php` and `node`). The CLI knows more; add a runtime to the file once its image has been tested.
+
 ## How it works
 - **LaraKube CLI owns the recipe.** `larakube workspace:images --json` lists every runtime and version with its base image, and `larakube workspace:dockerfile` prints the Dockerfile. This repository holds no Dockerfiles, so a version added to the CLI is published here without an edit.
 - **When it rebuilds.** Daily, a job compares each base image's digest, and a hash of the rendered Dockerfile, with the labels on the published image. A change in either rebuilds it. Run the workflow with *force* to rebuild everything.

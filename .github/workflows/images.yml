@@ -6,7 +6,7 @@ name: Workspace images
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/images.yml, scripts/**]
+    paths: [.github/workflows/images.yml, scripts/**, runtimes.txt]
   schedule:
     - cron: '17 4 * * *'
   workflow_dispatch:
@@ -31,14 +31,17 @@ jobs:
       images: ${{ steps.list.outputs.images }}
       code_server: ${{ steps.list.outputs.code_server }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install the LaraKube CLI
         run: curl -fsSL https://cli.larakube.app/install.sh | bash -s -- --canary
 
       - name: List the images
         id: list
         run: |
+          enabled="$(grep -v '^#' runtimes.txt | grep -v '^$' | jq -R . | jq -sc .)"
           json="$(larakube workspace:images --json --no-interaction | tail -n1)"
-          echo "images=$(jq -c '.images' <<<"$json")" >> "$GITHUB_OUTPUT"
+          echo "images=$(jq -c --argjson enabled "$enabled" '[.images[] | select(.runtime as $r | $enabled | index($r))]' <<<"$json")" >> "$GITHUB_OUTPUT"
           echo "code_server=$(jq -r '.codeServer' <<<"$json")" >> "$GITHUB_OUTPUT"
 
       - name: Warn when code-server is behind
