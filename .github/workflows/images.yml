@@ -1,0 +1,170 @@
+name: Workspace images
+
+# Rebuilds an image when its base image changed upstream, when the LaraKube CLI's recipe for it changed,
+# or when asked. The list of images (runtime x version) and each Dockerfile come from the LaraKube CLI,
+# so adding a version there is enough to publish it here.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/images.yml, scripts/**]
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild every image even if nothing changed
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      images: ${{ steps.list.outputs.images }}
+      code_server: ${{ steps.list.outputs.code_server }}
+    steps:
+      - name: Install the LaraKube CLI
+        run: curl -fsSL https://cli.larakube.app/install.sh | bash -s -- --canary
+
+      - name: List the images
+        id: list
+        run: |
+          json="$(larakube workspace:images --json --no-interaction | tail -n1)"
+          echo "images=$(jq -c '.images' <<<"$json")" >> "$GITHUB_OUTPUT"
+          echo "code_server=$(jq -r '.codeServer' <<<"$json")" >> "$GITHUB_OUTPUT"
+
+      - name: Warn when code-server is behind
+        run: |
+          latest="$(curl -fsSL https://api.github.com/repos/coder/code-server/releases/latest | jq -r '.tag_name' | sed 's/^v//')"
+          if [ "$latest" != "${{ steps.list.outputs.code_server }}" ]; then
+            echo "::warning::code-server ${latest} is out; the LaraKube CLI pins ${{ steps.list.outputs.code_server }}"
+          fi
+
+  build:
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.matrix.outputs.images) }}
+        platform: [amd64, arm64]
+    runs-on: ${{ matrix.platform == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the LaraKube CLI
+        run: curl -fsSL https://cli.larakube.app/install.sh | bash -s -- --canary
+
+      - name: Is a rebuild needed?
+        id: need
+        env:
+          BASE: ${{ matrix.image.base }}
+          REF: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.runtime }}:${{ matrix.image.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          base_digest="$(docker buildx imagetools inspect "$BASE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "base_digest=$base_digest" >> "$GITHUB_OUTPUT"
+          published="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null | jq -r '.. | .["org.opencontainers.image.base.digest"]? // empty' | head -n1 || true)"
+          recipe="$(scripts/render.sh ${{ matrix.image.runtime }} ${{ matrix.image.version }} /tmp/df >/dev/null && sha256sum /tmp/df/Dockerfile | cut -c1-16)"
+          echo "recipe=$recipe" >> "$GITHUB_OUTPUT"
+          published_recipe="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null | jq -r '.. | .["dev.larakube.workspace.recipe"]? // empty' | head -n1 || true)"
+          if [ "$FORCE" = "true" ] || [ "$published" != "$base_digest" ] || [ "$published_recipe" != "$recipe" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.need.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - if: steps.need.outputs.build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - if: steps.need.outputs.build == 'true'
+        run: scripts/render.sh ${{ matrix.image.runtime }} ${{ matrix.image.version }} build
+
+      - if: steps.need.outputs.build == 'true'
+        name: Build for testing
+        uses: docker/build-push-action@v6
+        with:
+          context: build
+          load: true
+          tags: smoke:${{ matrix.image.runtime }}-${{ matrix.image.version }}
+
+      - if: steps.need.outputs.build == 'true'
+        name: Smoke test
+        run: scripts/smoke.sh smoke:${{ matrix.image.runtime }}-${{ matrix.image.version }} ${{ matrix.image.runtime }}
+
+      - if: steps.need.outputs.build == 'true'
+        name: Push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: build
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.base.name=${{ matrix.image.base }}
+            org.opencontainers.image.base.digest=${{ steps.need.outputs.base_digest }}
+            dev.larakube.workspace.recipe=${{ steps.need.outputs.recipe }}
+            dev.larakube.workspace.code-server=${{ needs.matrix.outputs.code_server }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/${{ matrix.image.runtime }},push-by-digest=true,name-canonical=true,push=true
+
+      - if: steps.need.outputs.build == 'true'
+        name: Keep the digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - if: steps.need.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image.runtime }}-${{ matrix.image.version }}-${{ matrix.platform }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+
+  publish:
+    needs: [matrix, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.matrix.outputs.images) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: digests-${{ matrix.image.runtime }}-${{ matrix.image.version }}-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - name: Publish the multi-arch tags
+        id: publish
+        env:
+          NAME: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.runtime }}
+          VERSION: ${{ matrix.image.version }}
+        run: |
+          shopt -s nullglob
+          files=(/tmp/digests/*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "Nothing was rebuilt for ${NAME}:${VERSION}."
+            exit 0
+          fi
+          docker login ghcr.io -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"
+          sources=()
+          for f in "${files[@]}"; do sources+=("${NAME}@sha256:$(basename "$f")"); done
+          date_tag="$(date -u +%Y%m%d)"
+          docker buildx imagetools create -t "${NAME}:${VERSION}" -t "${NAME}:${VERSION}-r${date_tag}" "${sources[@]}"
+          docker buildx imagetools inspect "${NAME}:${VERSION}"
