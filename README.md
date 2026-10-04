@@ -5,7 +5,7 @@ Container images for LaraKube CLI workspaces: a language toolchain, git and a br
 
 | Image | Frameworks |
 | --- | --- |
-| `ghcr.io/luchavez-technologies/larakube-workspace-images/php:<version>` | Laravel, Statamic, WordPress. Built on [Server Side Up](https://serversideup.net/open-source/docker-php/) `cli` |
+| `ghcr.io/luchavez-technologies/larakube-workspace/php:<version>` | Laravel, Statamic, WordPress. Built on [Server Side Up](https://serversideup.net/open-source/docker-php/) `cli` |
 | `.../node:<version>` | Next.js, NestJS, AdonisJS, Astro, Vite, Docusaurus |
 | `.../python:<version>` | Django, FastAPI |
 | `.../java`, `.../dotnet`, `.../go`, `.../rust` | Spring Boot, .NET, Gin, Axum |
