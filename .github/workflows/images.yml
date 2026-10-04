@@ -1,12 +1,11 @@
 name: Workspace images
 
-# Rebuilds an image when its base image changed upstream, when the LaraKube CLI's recipe for it changed,
-# or when asked. The list of images (runtime x version) and each Dockerfile come from the LaraKube CLI,
-# so adding a version there is enough to publish it here.
+# Rebuilds an image when its base image changed upstream, when the Dockerfile or its options changed,
+# or when asked. images.json lists the images; the Dockerfile is the one recipe for all of them.
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/images.yml, scripts/**, runtimes.txt]
+    paths: [.github/workflows/images.yml, Dockerfile, images.json, scripts/**]
   schedule:
     - cron: '17 4 * * *'
   workflow_dispatch:
@@ -21,7 +20,6 @@ permissions:
   packages: write
 
 env:
-  REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository }}
 
 jobs:
@@ -29,26 +27,19 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       images: ${{ steps.list.outputs.images }}
-      code_server: ${{ steps.list.outputs.code_server }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install the LaraKube CLI
-        run: curl -fsSL https://cli.larakube.app/install.sh | bash -s -- --canary
-
       - name: List the images
         id: list
-        run: |
-          enabled="$(grep -v '^#' runtimes.txt | grep -v '^$' | jq -R . | jq -sc .)"
-          json="$(larakube workspace:images --json --no-interaction | tail -n1)"
-          echo "images=$(jq -c --argjson enabled "$enabled" '[.images[] | select(.runtime as $r | $enabled | index($r))]' <<<"$json")" >> "$GITHUB_OUTPUT"
-          echo "code_server=$(jq -r '.codeServer' <<<"$json")" >> "$GITHUB_OUTPUT"
+        run: echo "images=$(jq -c '.images' images.json)" >> "$GITHUB_OUTPUT"
 
       - name: Warn when code-server is behind
         run: |
+          pinned="$(jq -r '.codeServer' images.json)"
           latest="$(curl -fsSL https://api.github.com/repos/coder/code-server/releases/latest | jq -r '.tag_name' | sed 's/^v//')"
-          if [ "$latest" != "${{ steps.list.outputs.code_server }}" ]; then
-            echo "::warning::code-server ${latest} is out; the LaraKube CLI pins ${{ steps.list.outputs.code_server }}"
+          if [ "$latest" != "$pinned" ]; then
+            echo "::warning::code-server ${latest} is out; images.json pins ${pinned}"
           fi
 
   build:
@@ -62,23 +53,32 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install the LaraKube CLI
-        run: curl -fsSL https://cli.larakube.app/install.sh | bash -s -- --canary
-
-      - name: Is a rebuild needed?
+      - name: Work out what to build
         id: need
         env:
           BASE: ${{ matrix.image.base }}
           REF: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.runtime }}:${{ matrix.image.version }}
           FORCE: ${{ inputs.force }}
+          IMAGE: ${{ toJSON(matrix.image) }}
         run: |
+          code_server="$(jq -r '.codeServer' images.json)"
+          install_node="$(jq -r 'if .installNode then "1" else "0" end' <<<"$IMAGE")"
+          php_extensions="$(jq -r '.phpExtensions' <<<"$IMAGE")"
+          {
+            echo "code_server=$code_server"
+            echo "install_node=$install_node"
+            echo "php_extensions=$php_extensions"
+          } >> "$GITHUB_OUTPUT"
+
           base_digest="$(docker buildx imagetools inspect "$BASE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          recipe="$(printf '%s|%s|%s|%s|%s' "$(cat Dockerfile)" "$code_server" "$install_node" "$php_extensions" "$BASE" | sha256sum | cut -c1-16)"
           echo "base_digest=$base_digest" >> "$GITHUB_OUTPUT"
-          published="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null | jq -r '.. | .["org.opencontainers.image.base.digest"]? // empty' | head -n1 || true)"
-          recipe="$(scripts/render.sh ${{ matrix.image.runtime }} ${{ matrix.image.version }} /tmp/df >/dev/null && sha256sum /tmp/df/Dockerfile | cut -c1-16)"
           echo "recipe=$recipe" >> "$GITHUB_OUTPUT"
-          published_recipe="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null | jq -r '.. | .["dev.larakube.workspace.recipe"]? // empty' | head -n1 || true)"
-          if [ "$FORCE" = "true" ] || [ "$published" != "$base_digest" ] || [ "$published_recipe" != "$recipe" ]; then
+
+          labels="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null || true)"
+          published_base="$(jq -r '.. | .["org.opencontainers.image.base.digest"]? // empty' <<<"$labels" 2>/dev/null | head -n1 || true)"
+          published_recipe="$(jq -r '.. | .["dev.larakube.workspace.recipe"]? // empty' <<<"$labels" 2>/dev/null | head -n1 || true)"
+          if [ "$FORCE" = "true" ] || [ "$published_base" != "$base_digest" ] || [ "$published_recipe" != "$recipe" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
@@ -95,15 +95,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - if: steps.need.outputs.build == 'true'
-        run: scripts/render.sh ${{ matrix.image.runtime }} ${{ matrix.image.version }} build
-
-      - if: steps.need.outputs.build == 'true'
         name: Build for testing
         uses: docker/build-push-action@v6
         with:
-          context: build
+          context: .
           load: true
           tags: smoke:${{ matrix.image.runtime }}-${{ matrix.image.version }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.image.base }}
+            CODE_SERVER_VERSION=${{ steps.need.outputs.code_server }}
+            INSTALL_NODE=${{ steps.need.outputs.install_node }}
+            PHP_EXTENSIONS=${{ steps.need.outputs.php_extensions }}
 
       - if: steps.need.outputs.build == 'true'
         name: Smoke test
@@ -114,13 +116,18 @@ jobs:
         id: push
         uses: docker/build-push-action@v6
         with:
-          context: build
+          context: .
+          build-args: |
+            BASE_IMAGE=${{ matrix.image.base }}
+            CODE_SERVER_VERSION=${{ steps.need.outputs.code_server }}
+            INSTALL_NODE=${{ steps.need.outputs.install_node }}
+            PHP_EXTENSIONS=${{ steps.need.outputs.php_extensions }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.base.name=${{ matrix.image.base }}
             org.opencontainers.image.base.digest=${{ steps.need.outputs.base_digest }}
             dev.larakube.workspace.recipe=${{ steps.need.outputs.recipe }}
-            dev.larakube.workspace.code-server=${{ needs.matrix.outputs.code_server }}
+            dev.larakube.workspace.code-server=${{ steps.need.outputs.code_server }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/${{ matrix.image.runtime }},push-by-digest=true,name-canonical=true,push=true
 
       - if: steps.need.outputs.build == 'true'
@@ -154,7 +161,6 @@ jobs:
           merge-multiple: true
 
       - name: Publish the multi-arch tags
-        id: publish
         env:
           NAME: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.runtime }}
           VERSION: ${{ matrix.image.version }}
@@ -171,3 +177,23 @@ jobs:
           date_tag="$(date -u +%Y%m%d)"
           docker buildx imagetools create -t "${NAME}:${VERSION}" -t "${NAME}:${VERSION}-r${date_tag}" "${sources[@]}"
           docker buildx imagetools inspect "${NAME}:${VERSION}"
+
+  # Does not gate anything: tells you when the LaraKube CLI offers a runtime and version that has no image here.
+  cli-drift:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the LaraKube CLI
+        run: curl -fsSL https://cli.larakube.app/install.sh | bash -s -- --canary
+
+      - name: Compare what the CLI pulls with what is built here
+        run: |
+          cli="$(larakube workspace:images --json --no-interaction | tail -n1 | jq -r '.images[] | "\(.runtime):\(.version)"' | sort)"
+          here="$(jq -r '.images[] | "\(.runtime):\(.version)"' images.json | sort)"
+          if [ "$cli" != "$here" ]; then
+            echo "::warning::The LaraKube CLI and images.json disagree"
+            diff <(echo "$cli") <(echo "$here") || true
+            exit 1
+          fi

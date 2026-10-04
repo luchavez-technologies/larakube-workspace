@@ -1,0 +1,47 @@
+{
+  "codeServer": "4.140.0",
+  "images": [
+    {
+      "runtime": "php",
+      "version": "8.5",
+      "base": "docker.io/serversideup/php:8.5-cli",
+      "installNode": true,
+      "phpExtensions": "pdo_mysql pdo_pgsql intl zip gd bcmath pcntl redis"
+    },
+    {
+      "runtime": "php",
+      "version": "8.4",
+      "base": "docker.io/serversideup/php:8.4-cli",
+      "installNode": true,
+      "phpExtensions": "pdo_mysql pdo_pgsql intl zip gd bcmath pcntl redis"
+    },
+    {
+      "runtime": "php",
+      "version": "8.3",
+      "base": "docker.io/serversideup/php:8.3-cli",
+      "installNode": true,
+      "phpExtensions": "pdo_mysql pdo_pgsql intl zip gd bcmath pcntl redis"
+    },
+    {
+      "runtime": "php",
+      "version": "8.2",
+      "base": "docker.io/serversideup/php:8.2-cli",
+      "installNode": true,
+      "phpExtensions": "pdo_mysql pdo_pgsql intl zip gd bcmath pcntl redis"
+    },
+    {
+      "runtime": "node",
+      "version": "24",
+      "base": "docker.io/library/node:24-bookworm",
+      "installNode": false,
+      "phpExtensions": ""
+    },
+    {
+      "runtime": "node",
+      "version": "22",
+      "base": "docker.io/library/node:22-bookworm",
+      "installNode": false,
+      "phpExtensions": ""
+    }
+  ]
+}

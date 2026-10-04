@@ -1,3 +1,0 @@
-# The runtimes published. The CLI lists more; add one here when it has been tested.
-php
-node
